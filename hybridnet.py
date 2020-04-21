@@ -376,21 +376,21 @@ def trans_back(x):
     x = tf.transpose(x, perm=[0,2,3,1,4])
 
     return x
-def dense_rnn_net(args):
+def dense_rnn_net(batch, input_size, input_cols):
 
     #  ************************3d volume input******************************************************************
-    img_input = Input(batch_shape=(args.b, args.input_size, args.input_size, args.input_cols, 1), name='volumetric_data')
+    img_input = Input(batch_shape=(batch, input_size, input_size, input_cols, 1), name='volumetric_data')
 
     #  ************************(batch*d3cols)*2dvolume--2D DenseNet branch**************************************
     input2d = Lambda(slice, arguments={'h1': 0, 'h2': 2})(img_input)
     single = Lambda(slice, arguments={'h1':0, 'h2':1})(img_input)
     input2d = concatenate([single, input2d], axis=3)
-    for i in xrange(args.input_cols - 2):
+    for i in xrange(input_cols - 2):
         input2d_tmp = Lambda(slice, arguments={'h1': i, 'h2': i + 3})(img_input)
         input2d = concatenate([input2d, input2d_tmp], axis=0)
-        if i == args.input_cols - 3:
-            final1 = Lambda(slice, arguments={'h1': args.input_cols-2, 'h2': args.input_cols})(img_input)
-            final2 = Lambda(slice, arguments={'h1': args.input_cols-1, 'h2': args.input_cols})(img_input)
+        if i == input_cols - 3:
+            final1 = Lambda(slice, arguments={'h1': input_cols-2, 'h2': input_cols})(img_input)
+            final2 = Lambda(slice, arguments={'h1': input_cols-1, 'h2': input_cols})(img_input)
             final = concatenate([final1, final2], axis=3)
             input2d = concatenate([input2d, final], axis=0)
     input2d = Lambda(slice_last)(input2d)
@@ -399,7 +399,7 @@ def dense_rnn_net(args):
     feature2d, classifer2d = DenseUNet(input2d, reduction=0.5)
     res2d = Lambda(slice2d, arguments={'h1': 0, 'h2': 1})(classifer2d)
     fea2d = Lambda(slice2d, arguments={'h1':0, 'h2':1})(feature2d)
-    for j in xrange(args.input_cols - 1):
+    for j in xrange(input_cols - 1):
         score = Lambda(slice2d, arguments={'h1': j + 1, 'h2': j + 2})(classifer2d)
         fea2d_slice = Lambda(slice2d, arguments={'h1': j + 1, 'h2': j + 2})(feature2d)
         res2d = concatenate([res2d, score], axis=3)
@@ -407,7 +407,7 @@ def dense_rnn_net(args):
 
     #  *************************** 3d DenseNet on 3D volume (concate with feature map )*********************************
     res2d_input = Lambda(lambda x: x * 250)(res2d)
-    input3d_ori = Lambda(slice, arguments={'h1': 0, 'h2': args.input_cols})(img_input)
+    input3d_ori = Lambda(slice, arguments={'h1': 0, 'h2': input_cols})(img_input)
     input3d = concatenate([input3d_ori, res2d_input], axis=4)
     feature3d, classifer3d = DenseNet3D(input3d, reduction=0.5)
 
