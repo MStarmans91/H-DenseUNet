@@ -1,5 +1,5 @@
-import sys
-sys.path.insert(0,'Keras-2.0.8')
+#import sys
+#sys.path.insert(0,'Keras-2.0.8')
 from keras import backend as K
 import os
 import numpy as np
@@ -9,6 +9,7 @@ from skimage import measure
 from keras.optimizers import SGD
 from hybridnet import dense_rnn_net
 from loss import weighted_crossentropy
+import glob
 
 
 def padandcrop(image, sz):
@@ -69,11 +70,11 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
     score_num = np.zeros((x, y, z, num), dtype='int16')
 
     iterator = xrange(left_cols, right_cols+window_cols, window_cols)
-    num = 0
+    cnum = 0
     for cols in iterator:
-        num += 1
+        cnum += 1
         # print ('and', z-input_cols,z)
-        print(('\t Running column {} / {}.').format(num, len(iterator))
+        print(('\t Running column {} / {}.').format(cnum, len(iterator)))
         if cols > z - input_cols:
             patch_test = image[0:input_size, 0:input_size, z-input_cols:z]
             box_test[count, :, :, :, 0] = patch_test
@@ -143,10 +144,14 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
     #  preserve tumor within ' largest liver' only
     lesions = lesions * liver_labels
     lesions = ndimage.binary_fill_holes(lesions).astype(int)
-    lesions = np.array(lesions, dtype='uint8')
     liver_res = np.array(liver_res, dtype='uint8')
     liver_res = ndimage.binary_fill_holes(liver_res).astype(int)
-    liver_res[lesions == 1] = 2
+    # liver_res[lesions == 1] = 2
+
+    # transpose back and convert to float 64 for uint8 saving
+    lesions = np.transpose(lesions, [2, 1, 0])
+    liver_res = np.transpose(liver_res, [2, 1, 0])
+    lesions = np.array(lesions, dtype='uint8')
     liver_res = np.array(liver_res, dtype='uint8')
 
     return liver_res, lesions
@@ -188,20 +193,22 @@ def segment_patient(image_file_in, model_weights, liver_file_out, lesion_file_ou
                                              input_cols=input_cols)
 
     # Save the output
-    sitk.WriteImage(liver, liver_file_out)
-    sitk.WriteImage(lesions, lesion_file_out)
+    sitk.WriteImage(sitk.GetImageFromArray(liver), liver_file_out)
+    sitk.WriteImage(sitk.GetImageFromArray(lesions), lesion_file_out)
 
 
 def main():
-    image = '/media/martijn/DATA/CLM/CLMRadiomics-030/CLMRadiomics-030/2/image.nii.gz'
-    liver_file_out = os.path.join(os.path.dirname(image), 'liver.nii.gz')
-    lesion_file_out = os.path.join(os.path.dirname(image), 'lesions.nii.gz')
-    model_weights = '/home/martijn/Downloads/model_best.hdf5'
-
-    segment_patient(image_file_in=image,
-                    model_weights=model_weights,
-                    liver_file_out=liver_file_out,
-                    lesion_file_out=lesion_file_out)
+    images = glob.glob('/scratch-shared/mstar/Data/CLM/*/*/*/image.nii.gz')
+    images.sort()
+    model_weights = '/scratch-shared/mstar/Data/CLM/model_best.hdf5'
+    for imnum, image in enumerate(images):
+        print(('Proccessing image: {} ( {} / {}).').format(image, imnum, len(images)))
+        liver_file_out = os.path.join(os.path.dirname(image), 'liver.nii.gz')
+        lesion_file_out = os.path.join(os.path.dirname(image), 'lesions.nii.gz')
+        segment_patient(image_file_in=image,
+                        model_weights=model_weights,
+                        liver_file_out=liver_file_out,
+                        lesion_file_out=lesion_file_out)
 
 
 if __name__ == "__main__":
