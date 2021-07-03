@@ -68,6 +68,9 @@ If H-DenseUNet is useful for your research, please consider citing:
 
   ```
 
+## Adjustments
+
+Removed mkl-random, tensorflow requirements.
 
 ### Questions
 
