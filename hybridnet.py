@@ -68,6 +68,7 @@ def dense_block3d(x, stage, nb_layers, nb_filter, growth_rate, dropout_rate=None
             nb_filter += growth_rate
 
     return concat_feat, nb_filter
+
 def transition_block3d(x, stage, nb_filter, compression=1.0, dropout_rate=None, weight_decay=1E-4):
     ''' Apply BatchNorm, 1x1 Convolution, averagePooling, optional compression, dropout
         # Arguments
@@ -140,14 +141,17 @@ def DenseNet3D(img_input, nb_dense_block=4, growth_rate=32, nb_filter=96, reduct
         nb_filter = int(nb_filter * compression)
 
     final_stage = stage + 1
-    x, nb_filter = dense_block3d(x, final_stage, nb_layers[-1], nb_filter, growth_rate, dropout_rate=dropout_rate,
-                               weight_decay=weight_decay)
 
-    x = BatchNormalization(epsilon=eps, axis=4, name='3dconv' + str(final_stage) + '_blk_bn')(x)
+    # The `latent space block`, i.e., the final dense block before upsampling
+    latent_space, nb_filter = dense_block3d(x, final_stage, nb_layers[-1], nb_filter, growth_rate, dropout_rate=dropout_rate,
+                                 weight_decay=weight_decay)
+
+    x = BatchNormalization(epsilon=eps, axis=4, name='3dconv' + str(final_stage) + '_blk_bn')(latent_space)
     x = Scale(axis=4, name='3dconv' + str(final_stage) + '_blk_scale')(x)
     x = Activation('relu', name='3drelu' + str(final_stage) + '_blk')(x)
     box.append(x)
 
+    # First upsampling layer
     up0 = UpSampling3D(size=(2, 2, 1))(x)
     conv_up0 = Conv3D(504, (3, 3, 3), padding="same", name="3dconv_up0")(up0)
     bn_up0 = BatchNormalization(name="3dbn_up0")(conv_up0)
@@ -175,7 +179,7 @@ def DenseNet3D(img_input, nb_dense_block=4, growth_rate=32, nb_filter=96, reduct
 
     x = Conv3D(3, (1, 1, 1), padding="same", name='3dclassifer')(ac_up4)
 
-    return ac_up4, x
+    return ac_up4, x, latent_space
 
 
 
@@ -409,7 +413,7 @@ def dense_rnn_net(batch, input_size, input_cols):
     res2d_input = Lambda(lambda x: x * 250)(res2d)
     input3d_ori = Lambda(slice, arguments={'h1': 0, 'h2': input_cols})(img_input)
     input3d = concatenate([input3d_ori, res2d_input], axis=4)
-    feature3d, classifer3d = DenseNet3D(input3d, reduction=0.5)
+    feature3d, classifer3d, latent_space = DenseNet3D(input3d, reduction=0.5)
 
     final = add([feature3d, fea2d])
     final_conv = Conv3D(64, (3, 3, 3), padding="same", name='fianl_conv')(final)
@@ -419,8 +423,9 @@ def dense_rnn_net(batch, input_size, input_cols):
     classifer = Conv3D(3, (1, 1, 1), padding="same", name='2d3dclassifer')(final_ac)
 
     model = Model( inputs = img_input,outputs = classifer, name='auto3d_residual_conv')
+    latent_model = Model(inputs=img_input, outputs=latent_space, name='auto3d_residual_conv_latent_space')
 
-    return model
+    return model, latent_model
 
 
 def dilated_resnet(args):

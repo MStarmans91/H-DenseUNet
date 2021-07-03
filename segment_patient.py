@@ -181,8 +181,9 @@ def segment_patient(image_file_in, model_weights, liver_file_out, lesion_file_ou
     image -= mean
 
     # Load the H-DenseUnet model
-    model = dense_rnn_net(batch, input_size, input_cols)
+    model, latent_model = dense_rnn_net(batch, input_size, input_cols)
     model.load_weights(model_weights)
+    latent_model.load_weights(model_weights)
     sgd = SGD(lr=1e-2, momentum=0.9, nesterov=True)
     model.compile(optimizer=sgd, loss=[weighted_crossentropy])
 
