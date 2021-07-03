@@ -113,10 +113,6 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
     result2[result2 < thresh_tumor] = 0
     result1[result2 == 1] = 1
 
-    print('-' * 30)
-    print('Postprocessing on mask ...' + str(id))
-    print('-' * 30)
-
     #  preserve the largest liver
     lesions = result2
     box = list()
@@ -157,7 +153,8 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
     return liver_res, lesions
 
 
-def segment_patient(image_file_in, model_weights, liver_file_out, lesion_file_out,
+def segment_patient(image_file_in, model_weights, liver_file_out,
+                    lesion_file_out=None,
                     mean=48, batch=1, input_cols=8):
     '''
     From an input image:
@@ -194,7 +191,8 @@ def segment_patient(image_file_in, model_weights, liver_file_out, lesion_file_ou
 
     # Save the output
     sitk.WriteImage(sitk.GetImageFromArray(liver), liver_file_out)
-    sitk.WriteImage(sitk.GetImageFromArray(lesions), lesion_file_out)
+    if lesion_file_out is not None:
+        sitk.WriteImage(sitk.GetImageFromArray(lesions), lesion_file_out)
 
 
 def main():
