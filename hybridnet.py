@@ -43,6 +43,7 @@ def conv_block3d(x, stage, branch, nb_filter, dropout_rate=None, weight_decay=1e
         x = Dropout(dropout_rate)(x)
 
     return x
+
 def dense_block3d(x, stage, nb_layers, nb_filter, growth_rate, dropout_rate=None, weight_decay=1e-4, grow_nb_filters=True):
     ''' Build a dense_block where the output of each conv_block is fed to subsequent ones
         # Arguments
@@ -120,25 +121,31 @@ def DenseNet3D(img_input, nb_dense_block=4, growth_rate=32, nb_filter=96, reduct
     nb_layers = [3, 4, 12, 8]  # For DenseNet-161
     box = []
     # Initial convolution
+    print("Input: " + str(img_input.shape))
     x = ZeroPadding3D((3, 3, 3), name='3dconv1_zeropadding')(img_input)
     x = Conv3D(nb_filter, (7, 7, 7), strides=(2, 2, 2), name='3dconv1', use_bias=False)(x)
     x = BatchNormalization(epsilon=eps, axis=4, name='3dconv1_bn')(x)
     x = Scale(axis=4, name='3dconv1_scale')(x)
     x = Activation('relu', name='3drelu1')(x)
     box.append(x)
+    print("Conv1: " + str(x.shape))
+
     x = ZeroPadding3D((1, 1, 1), name='3dpool1_zeropadding')(x)
     x = MaxPooling3D((3, 3, 3), strides=(2, 2, 2), name='3dpool1')(x)
+    print("Pooling: " + str(x.shape))
 
     # Add dense blocks
     for block_idx in range(nb_dense_block - 1):
         stage = block_idx + 2
         x, nb_filter = dense_block3d(x, stage, nb_layers[block_idx], nb_filter, growth_rate, dropout_rate=dropout_rate,
                                    weight_decay=weight_decay)
+        print("Dense Block " + str(block_idx + 1) + ": " + str(x.shape))
         box.append(x)
         # Add transition_block
         x = transition_block3d(x, stage, nb_filter, compression=compression, dropout_rate=dropout_rate,
                              weight_decay=weight_decay)
         nb_filter = int(nb_filter * compression)
+        print("Transition " + str(block_idx + 1) + ": " + str(x.shape))
 
     final_stage = stage + 1
 
@@ -146,38 +153,44 @@ def DenseNet3D(img_input, nb_dense_block=4, growth_rate=32, nb_filter=96, reduct
     latent_space, nb_filter = dense_block3d(x, final_stage, nb_layers[-1], nb_filter, growth_rate, dropout_rate=dropout_rate,
                                  weight_decay=weight_decay)
 
+    print("Dense Block 4: " + str(latent_space.shape))
     x = BatchNormalization(epsilon=eps, axis=4, name='3dconv' + str(final_stage) + '_blk_bn')(latent_space)
     x = Scale(axis=4, name='3dconv' + str(final_stage) + '_blk_scale')(x)
     x = Activation('relu', name='3drelu' + str(final_stage) + '_blk')(x)
-    box.append(x)
 
     # First upsampling layer
     up0 = UpSampling3D(size=(2, 2, 1))(x)
     conv_up0 = Conv3D(504, (3, 3, 3), padding="same", name="3dconv_up0")(up0)
     bn_up0 = BatchNormalization(name="3dbn_up0")(conv_up0)
     ac_up0 = Activation('relu', name='3dac_up0')(bn_up0)
+    print("Upsampling 1: " + str(ac_up0.shape))
 
     up1 = UpSampling3D(size=(2, 2, 1))(ac_up0)
     conv_up1 = Conv3D(224, (3, 3, 3), padding="same", name="3dconv_up1")(up1)
     bn_up1 = BatchNormalization(name="3dbn_up1")(conv_up1)
     ac_up1 = Activation('relu', name='3dac_up1')(bn_up1)
+    print("Upsampling 2: " + str(ac_up1.shape))
 
     up2 = UpSampling3D(size=(2, 2, 1))(ac_up1)
     conv_up2 = Conv3D(192, (3, 3, 3), padding="same", name="3dconv_up2")(up2)
     bn_up2 = BatchNormalization(name="3dbn_up2")(conv_up2)
     ac_up2 = Activation('relu', name='3dac_up2')(bn_up2)
+    print("Upsampling 3: " + str(ac_up2.shape))
 
     up3 = UpSampling3D(size=(2, 2, 2))(ac_up2)
     conv_up3 = Conv3D(96, (3, 3, 3), padding="same", name="3dconv_up3")(up3)
     bn_up3 = BatchNormalization(name="3dbn_up3")(conv_up3)
     ac_up3 = Activation('relu', name='3dac_up3')(bn_up3)
+    print("Upsampling 4: " + str(ac_up3.shape))
 
     up4 = UpSampling3D(size=(2, 2, 2))(ac_up3)
     conv_up4 = Conv3D(64, (3, 3, 3), padding="same", name="3dconv_up4")(up4)
     bn_up4 = BatchNormalization(name="3dbn_up4")(conv_up4)
     ac_up4 = Activation('relu', name='3dac_up4')(bn_up4)
+    print("Upsampling 5: " + str(ac_up4.shape))
 
     x = Conv3D(3, (1, 1, 1), padding="same", name='3dclassifer')(ac_up4)
+    print("Conv2: " + str(x.shape))
 
     return ac_up4, x, latent_space
 

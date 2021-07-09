@@ -51,7 +51,8 @@ def preprocessing(image_array, input_size=512):
 
 
 def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
-                            thresh_liver=0.5, thresh_tumor=0.9, num=3):
+                            thresh_liver=0.5, thresh_tumor=0.9, num=3,
+                            latent_model=None):
     '''
     Prediction of segmentation of both liver and tumor
     '''
@@ -68,6 +69,18 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
     left_cols = max(0, min(0-5, right_cols))
     score = np.zeros((x, y, z, num), dtype='float32')
     score_num = np.zeros((x, y, z, num), dtype='int16')
+    print(x, y, z)
+
+    if latent_model:
+        # Initialize 3D latent space features array
+        n_filters = 504
+        # Not sure where this comes from. Start is nb_filters
+        # = 96. Then through a combination of compression and growth rate
+        # for a number of dense blocks it becomes 504
+        x_ls = x / 2**5  # Number of dense blocks + 1
+        y_ls = y / 2**5
+        latent_features = np.zeros((x_ls, y_ls, z, n_filters), dtype='float32')
+        latent_features_num = np.zeros((x_ls, y_ls, z, n_filters), dtype='int16')
 
     iterator = xrange(left_cols, right_cols+window_cols, window_cols)
     cnum = 0
@@ -88,6 +101,16 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
             for i in xrange(batch):
                 score[0:input_size, 0:input_size, z-input_cols+1:z-1, :] += patch_test_mask[i]
                 score_num[0:input_size, 0:input_size,  z-input_cols+1:z-1, :] += 1
+
+            if latent_model:
+                latent_features_test = latent_model.predict(box_test,
+                                                            batch_size=batch,
+                                                            verbose=0)
+
+                for i in xrange(batch):
+                    # FIXME: adopted size to default settings, should be adaptive
+                    latent_features[:, :, z-3:z-1, :] += latent_features_test[i]
+                    latent_features_num[:, :, z-3:z-1, :] += 1
         else:
             patch_test = image[0:input_size, 0:input_size, cols:cols + input_cols]
             box_test[count, :, :, :, 0] = patch_test
@@ -100,9 +123,23 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
                 score[0:input_size, 0:input_size, cols+1:cols+input_cols-1, :] += patch_test_mask[i]
                 score_num[0:input_size, 0:input_size, cols+1:cols+input_cols-1, :] += 1
 
+            if latent_model:
+                latent_features_test = latent_model.predict(box_test,
+                                                            batch_size=batch,
+                                                            verbose=0)
+
+                for i in xrange(batch):
+                    # FIXME: adopted size to default settings, should be adaptive
+                    latent_features[:, :, cols+1:cols+3, :] += latent_features_test[i]
+                    latent_features_num[:, :, cols+1:cols+3, :] += 1
+
     score = score/(score_num + 1e-4)
-    result1 = score[:, :, :, num-2]
-    result2 = score[:, :, :, num-1]
+    if latent_model:
+        latent_features = latent_features/(latent_features_num + 1e-4)
+
+    # score[:, :, 0] == background
+    result1 = score[:, :, :, num-2]  # Liver
+    result2 = score[:, :, :, num-1]  # Lesions
 
     K.clear_session()
 
@@ -150,11 +187,14 @@ def predict_liver_and_tumor(model, image, batch, input_size, input_cols,
     lesions = np.array(lesions, dtype='uint8')
     liver_res = np.array(liver_res, dtype='uint8')
 
-    return liver_res, lesions
+    if latent_model:
+        return liver_res, lesions, latent_features
+    else:
+        return liver_res, lesions
 
 
 def segment_patient(image_file_in, model_weights, liver_file_out,
-                    lesion_file_out=None,
+                    lesion_file_out=None, latent_file_out=None,
                     mean=48, batch=1, input_cols=8):
     '''
     From an input image:
@@ -180,34 +220,51 @@ def segment_patient(image_file_in, model_weights, liver_file_out,
     # Load the H-DenseUnet model
     model, latent_model = dense_rnn_net(batch, input_size, input_cols)
     model.load_weights(model_weights)
-    latent_model.load_weights(model_weights)
+    if latent_file_out is not None:
+        latent_model.load_weights(model_weights, by_name=True)
+    else:
+        latent_model = None
+
     sgd = SGD(lr=1e-2, momentum=0.9, nesterov=True)
     model.compile(optimizer=sgd, loss=[weighted_crossentropy])
 
     # Predict the tumor segmentation
     print('Predicting masks on test data...' + str(id))
-    liver, lesions = predict_liver_and_tumor(model, image, batch=batch,
-                                             input_size=input_size,
-                                             input_cols=input_cols)
+    if latent_file_out is None:
+        liver, lesions = predict_liver_and_tumor(model, image, batch=batch,
+                                                 input_size=input_size,
+                                                 input_cols=input_cols)
+    else:
+        liver, lesions, latent_features =\
+            predict_liver_and_tumor(model, image, batch=batch,
+                                    input_size=input_size,
+                                    input_cols=input_cols,
+                                    latent_model=latent_model)
 
     # Save the output
     sitk.WriteImage(sitk.GetImageFromArray(liver), liver_file_out)
+
     if lesion_file_out is not None:
         sitk.WriteImage(sitk.GetImageFromArray(lesions), lesion_file_out)
+
+    if latent_file_out is not None:
+        sitk.WriteImage(sitk.GetImageFromArray(latent_features), latent_file_out)
 
 
 def main():
     images = glob.glob('/scratch-shared/mstar/Data/CLM/*/*/*/image.nii.gz')
     images.sort()
     model_weights = '/scratch-shared/mstar/Data/CLM/model_best.hdf5'
-    for imnum, image in enumerate(images):
-        print(('Proccessing image: {} ( {} / {}).').format(image, imnum, len(images)))
+    for imnum, image in enumerate(images[24:]):
+        print(('Proccessing image: {} ( {} / {}).').format(image, imnum + 1, len(images)))
         liver_file_out = os.path.join(os.path.dirname(image), 'liver.nii.gz')
         lesion_file_out = os.path.join(os.path.dirname(image), 'lesions.nii.gz')
+        latent_file_out = os.path.join(os.path.dirname(image), 'lantent_space.nii.gz')
         segment_patient(image_file_in=image,
                         model_weights=model_weights,
                         liver_file_out=liver_file_out,
-                        lesion_file_out=lesion_file_out)
+                        lesion_file_out=lesion_file_out,
+                        latent_file_out=latent_file_out)
 
 
 if __name__ == "__main__":
